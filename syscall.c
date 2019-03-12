@@ -103,6 +103,8 @@ extern int sys_unlink(void);
 extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
+extern int sys_info(void);//cs202
+extern int sys_lottery_fork(void);//cs202
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -126,6 +128,8 @@ static int (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_info]    sys_info,//cs202 syscall for part1
+[SYS_lottery_fork]    sys_lottery_fork,//cs202 syscall for fork with tickets amount
 };
 
 void
@@ -133,8 +137,10 @@ syscall(void)
 {
   int num;
   struct proc *curproc = myproc();
+  curproc->syscallCount++;//cs202
 
   num = curproc->tf->eax;
+//  cprintf("pid:%d syscall:%d\n",curproc->pid, num);//cs202
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     curproc->tf->eax = syscalls[num]();
   } else {

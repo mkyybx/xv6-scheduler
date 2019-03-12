@@ -70,8 +70,9 @@ myproc(void) {
 // If found, change state to EMBRYO and initialize
 // state required to run in the kernel.
 // Otherwise return 0.
+// implementation of allocproc func
 static struct proc*
-allocproc(void)
+allocproc_impl(void)    //cs202
 {
   struct proc *p;
   char *sp;
@@ -111,9 +112,26 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
-
+  p->syscallCount = 0;  //cs202
+  p->tickets = 500; // cs202 Default value
+  p->original_tickets = 500;//cs202
+  p->sched_times = 0;//cs202
   return p;
 }
+//cs202
+static struct proc*//cs202
+allocproc(void) {//cs202
+  return allocproc_impl();//cs202
+}//cs202
+//cs202
+//init tickets info of a proc struct
+static struct proc*//cs202
+lottery_allocproc(int tickets) {//cs202
+  struct proc* p = allocproc_impl();//cs202
+  p->tickets = tickets;//cs202
+  p->original_tickets = tickets;//cs202
+  return p;//cs202
+}//cs202
 
 //PAGEBREAK: 32
 // Set up first user process.
@@ -173,6 +191,56 @@ growproc(int n)
   switchuvm(curproc);
   return 0;
 }
+//implementation of fork+
+int fork_impl(struct proc *np) {//cs202
+//cs202
+  int i, pid;//cs202
+  struct proc *curproc = myproc();//cs202
+//cs202
+  // Copy process state from proc.//cs202
+  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){//cs202
+    kfree(np->kstack);//cs202
+    np->kstack = 0;//cs202
+    np->state = UNUSED;//cs202
+    return -1;//cs202
+  }//cs202
+  np->sz = curproc->sz;//cs202
+  np->parent = curproc;//cs202
+  *np->tf = *curproc->tf;//cs202
+//cs202
+  // Clear %eax so that fork returns 0 in the child.//cs202
+  np->tf->eax = 0;//cs202
+//cs202
+  for(i = 0; i < NOFILE; i++)//cs202
+    if(curproc->ofile[i])//cs202
+      np->ofile[i] = filedup(curproc->ofile[i]);//cs202
+  np->cwd = idup(curproc->cwd);//cs202
+//cs202
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));//cs202
+//cs202
+  pid = np->pid;//cs202
+//cs202
+  acquire(&ptable.lock);//cs202+
+//cs202
+  np->state = RUNNABLE;//cs202
+//cs202
+  release(&ptable.lock);//cs202
+//cs202
+  return pid;//cs202
+//cs202
+}//cs202
+//cs202
+//cs202
+int lottery_fork(int tickets) {//cs202
+  struct proc *np;//cs202
+//cs202
+  // Allocate process.//cs202
+  if((np = lottery_allocproc(tickets)) == 0){//cs202
+    return -1;//cs202
+  }//cs202
+//cs202
+  return fork_impl(np);//cs202
+}//cs202
 
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
@@ -180,45 +248,14 @@ growproc(int n)
 int
 fork(void)
 {
-  int i, pid;
-  struct proc *np;
-  struct proc *curproc = myproc();
+  struct proc *np;//cs202 deletion
 
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
-    kfree(np->kstack);
-    np->kstack = 0;
-    np->state = UNUSED;
-    return -1;
-  }
-  np->sz = curproc->sz;
-  np->parent = curproc;
-  *np->tf = *curproc->tf;
-
-  // Clear %eax so that fork returns 0 in the child.
-  np->tf->eax = 0;
-
-  for(i = 0; i < NOFILE; i++)
-    if(curproc->ofile[i])
-      np->ofile[i] = filedup(curproc->ofile[i]);
-  np->cwd = idup(curproc->cwd);
-
-  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
-  pid = np->pid;
-
-  acquire(&ptable.lock);
-
-  np->state = RUNNABLE;
-
-  release(&ptable.lock);
-
-  return pid;
+  return fork_impl(np);//cs202 delettion
 }
 
 // Exit the current process.  Does not return.
@@ -248,6 +285,11 @@ exit(void)
   curproc->cwd = 0;
 
   acquire(&ptable.lock);
+//cs202 start
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state != UNUSED)
+      cprintf("pid=%d, sched times:%d\n", p->pid, p->sched_times);
+  }//cs202 end
 
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
@@ -310,6 +352,130 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+//cs202 start
+//generate a random number using tdtsc instruction
+int random() {
+  int cycle;
+  asm volatile ("push %edx;\nrdtsc;");
+  asm volatile ("mov %%eax,%0;":"=r"(cycle));
+  asm volatile ("pop %edx;\n");
+  return cycle;
+}
+
+//stride scheduler
+void
+s_scheduler(void)
+{
+    struct proc *p;
+    struct cpu *c = mycpu();
+    c->proc = 0;
+
+    for(;;) {
+        // Enable interrupts on this processor.
+        sti();
+        int minimum = 0x7FFFFFFF;
+        struct proc* min_proc = 0;
+        // Loop over process table looking for process to run.
+        acquire(&ptable.lock);
+        for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+            //p->state == RUNNABLE ? cprintf("%d,", p->tickets) : 0;
+            if (p->state == RUNNABLE && p->tickets < minimum) {
+                minimum = p->tickets;
+                min_proc = p;
+            }
+        }
+
+        if (min_proc == 0)
+            goto goto_release;
+
+        int cutdown_tickets = min_proc->tickets;
+
+        if (min_proc->tickets + min_proc->original_tickets <= 0) {
+            for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+                //p->state == RUNNABLE ? cprintf("%d,", p->tickets) : 0;
+                if (p->state != UNUSED)
+                    p->tickets -= cutdown_tickets;
+            }
+        }
+
+        min_proc->tickets += min_proc->original_tickets;
+        p = min_proc;
+       // cprintf("minimum=%d,%d is running\n", minimum, p->pid);
+        // Switch to chosen process.  It is the process's job
+        // to release ptable.lock and then reacquire it
+        // before jumping back to us.
+        //cprintf("winner:%d\n", p->pid);
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        p->sched_times++;
+
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+        goto_release:
+        release(&ptable.lock);
+
+    }
+}
+
+//lotter_schedular
+void
+scheduler(void)
+{
+    struct proc *p;
+    struct cpu *c = mycpu();
+    c->proc = 0;
+
+    for(;;) {
+      // Enable interrupts on this processor.
+      sti();
+      int total_tickets = 0;
+      // Loop over process table looking for process to run.
+      acquire(&ptable.lock);
+      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if (p->state == RUNNABLE)
+          total_tickets += p->tickets;
+      }
+      //cprintf("tickets:%d\n", total_tickets);
+      if (total_tickets == 0)
+          goto goto_release;
+      int random_numer = random();
+      if (random_numer < 0)
+          random_numer = -random_numer;
+      int winner_ticket = random_numer % total_tickets;
+      total_tickets = 0;
+      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if (p->state == RUNNABLE) {
+          total_tickets += p->tickets;
+          if (total_tickets >= winner_ticket)
+            break;
+        }
+      }
+
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      p->sched_times++;
+
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+goto_release:
+      release(&ptable.lock);
+
+    }
+}
+//cs202 end
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
@@ -320,7 +486,7 @@ wait(void)
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
 void
-scheduler(void)
+o_scheduler(void)//cs202
 {
   struct proc *p;
   struct cpu *c = mycpu();
@@ -332,6 +498,7 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    //int count = 0;//cs202
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
@@ -339,6 +506,8 @@ scheduler(void)
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
+      //cprintf("%d,",p->pid);//cs202
+      //count++;//cs202
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -350,6 +519,7 @@ scheduler(void)
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
+    //count != 0 ? cprintf("\n") : 0;//cs202
     release(&ptable.lock);
 
   }
@@ -532,3 +702,17 @@ procdump(void)
     cprintf("\n");
   }
 }
+//get the number of processes
+//cs202 start
+int getProcNum(void) {
+  struct proc *p;
+  int count = 0;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state != UNUSED)
+      count++;
+  }
+  release(&ptable.lock);
+  return count;
+}
+//cs202 end

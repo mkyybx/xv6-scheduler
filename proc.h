@@ -48,7 +48,11 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
+  int syscallCount;            // System call times so far//cs202
   char name[16];               // Process name (debugging)
+  int tickets;                 // Lottery tickets//cs202
+  int original_tickets;        // Original priority used for stride scheduler//cs202
+  unsigned long sched_times;   // Times when scheduled//cs202
 };
 
 // Process memory is laid out contiguously, low addresses first:

@@ -223,6 +223,8 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 {
   char *mem;
   uint a;
+//cs202
+  cprintf("vm:%d->%d\n", oldsz, newsz);//cs202
 
   if(newsz >= KERNBASE)
     return 0;

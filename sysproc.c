@@ -89,3 +89,33 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+//cs202 start
+extern int getProcNum(void);
+//impl of syscall info
+int
+sys_info(void)
+{
+  int choice = 0;
+
+  if (argint(0, &choice) < 0)
+    return -1;
+  else if (choice == 1)
+    //Process count
+    return getProcNum();
+  else if (choice == 2)
+    //get syscall count
+    return myproc()->syscallCount;
+  else if (choice == 3)
+    //get page count
+    return PGROUNDUP(myproc()->sz) / PGSIZE;
+  else return -1;
+}
+extern int lottery_fork(int tickets);
+//impl for syscall lottery_fork
+int sys_lottery_fork(void) {
+  int tickets = 0;
+  if (argint(0, &tickets) < 0)
+    return -1;
+  else return lottery_fork(tickets);
+}
+//cs202 end
